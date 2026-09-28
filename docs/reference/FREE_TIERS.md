@@ -291,6 +291,13 @@ model lockout / cooldown, and (on the synthetic `noauth` path) pauses auto-combo
 for a short TTL. Ship requests that carry a non-empty tool list, `stream: true`, and the
 OpenCode session/UA headers (`opencodeFreeTierContract.ts`) or expect the 403.
 
+The pause is armed **only when the refused request did not already carry the contract**
+(`carriesFreeTierRequestContract` in `opencodeFreeTierContract.ts`): a contract-shaped
+request (own tools + `stream: true` + a session or CLI user-agent) that still 403s does not
+arm the provider-global pause — the per-shape retry (`opencodeFreeTierRetry.ts`, #14405)
+handles it. Without that guard, one thin/synthetic request would black out every later
+contract-shaped request of the provider for the TTL.
+
 ## What changed since the shipped catalog (`freeNote`)
 
 > The v3.8.0-era `freeNote` strings are stale. Corrections found by this research (these drive the catalog update in `_tasks/features-v3.8.12`):
