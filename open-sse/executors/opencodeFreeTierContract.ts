@@ -22,6 +22,8 @@
  * for JSON, reusing the shared event-stream parsers.
  */
 import { parseSSEToOpenAIResponse, parseSSEToResponsesOutput } from "../handlers/sseParser.ts";
+import { satisfiesOpencodeUserAgentContract } from "../utils/opencodeHeaders.ts";
+import { resolveOpencodeSessionIdentity } from "../utils/opencodeSessionIdentity.ts";
 import {
   getObservedToolNames,
   noteRefusedBorrowedToolNames,
@@ -326,6 +328,46 @@ function clientToolNamesOf(body: unknown): string[] {
     if (typeof name === "string") names.push(name);
   }
   return names;
+}
+
+/**
+ * Whether a request already carried the whole contract BEFORE this module filled
+ * anything in — the caller's own tools, the streaming flag, and an identity.
+ *
+ * Reads the CLIENT's request, not the one this module produced: the placeholder
+ * tool, the forced `stream: true` and the synthesized session/user-agent are
+ * OmniRoute's own synthesis, so a body carrying them proves nothing about the
+ * caller. That is why the placeholder names are excluded below — `_noop` (and
+ * whatever the operator configured) is what THIS module injects, never evidence
+ * that the client declared anything.
+ *
+ * The identity half accepts either a session or a CLI user-agent, because the
+ * upstream contract needs one of the two to be a recognizable client and
+ * OmniRoute fills the other in anyway; a request with neither is a foreign
+ * shape whose refusal says nothing about the good shapes behind it.
+ */
+export function carriesFreeTierRequestContract(
+  body: unknown,
+  clientHeaders: Record<string, string> | null | undefined
+): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const record = body as Record<string, unknown>;
+
+  // Body half: the streaming flag is the caller's, and the tools are the
+  // caller's own — a body of placeholder names only is a thin request.
+  if (record.stream !== true) return false;
+  const placeholders = new Set([PLACEHOLDER_TOOL_NAME, ...configuredPlaceholderToolNames()]);
+  if (!clientToolNamesOf(record).some((name) => !placeholders.has(name))) return false;
+
+  // Header half: an explicit session identity, or a User-Agent that already
+  // satisfies the CLI contract (so it is the client's, not one we would
+  // substitute for it).
+  const headers = clientHeaders || {};
+  if (resolveOpencodeSessionIdentity(headers, record)) return true;
+  const userAgent = Object.entries(headers).find(
+    ([key]) => key.toLowerCase() === "user-agent"
+  )?.[1];
+  return satisfiesOpencodeUserAgentContract(userAgent);
 }
 
 /**

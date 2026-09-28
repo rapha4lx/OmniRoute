@@ -249,6 +249,7 @@ import {
 } from "@/lib/resilience/settings";
 import { classifyProviderError, PROVIDER_ERROR_TYPES } from "../services/errorClassifier.ts";
 import { isOpencodeFreeTierRefusalForProvider } from "../executors/opencodeGeoBlock.ts";
+import { carriesFreeTierRequestContract } from "../executors/opencodeFreeTierContract.ts";
 import { noteOpencodeFreeTierSkip } from "../services/opencodeFreeTierSkip.ts";
 import { updateProviderConnection, getProviderConnectionById } from "@/lib/db/providers";
 import { wasRefreshTokenRotated } from "@omniroute/open-sse/services/refreshSerializer.ts";
@@ -4028,11 +4029,37 @@ async function handleChatCoreInner({
           );
           // #14313: free-tier refusal on the keyless path — record a short TTL
           // skip so auto-combo / noauth fallback stop re-picking it immediately.
+          // Option A: the skip is provider-GLOBAL and in-process, so arming it
+          // from a refusal on a request that already carried the whole contract
+          // (own tools + stream + a session/CLI-UA identity) blacks out every
+          // later request of the provider, including the native client's good
+          // shape that would have been served — one bad-shaped request must not
+          // cost the well-shaped ones their 3 minutes. Such a refusal is a
+          // per-shape verdict the per-request retry already handles
+          // (opencodeFreeTierRetry.ts, #14405), so nothing is armed here. Only
+          // shapes that did NOT carry the contract arm the pause, which is the
+          // tight re-pick loop it exists to bound.
           if (
             errorConnectionId === "noauth" &&
             isOpencodeFreeTierRefusalForProvider(provider, statusCode, message)
           ) {
-            noteOpencodeFreeTierSkip(provider);
+            // `body` may already carry OmniRoute's own synthesis (the web-search
+            // fallback replaces the client's tools), so the raw client body is the
+            // honest source; `getExecutorClientHeaders()` is client-derived only —
+            // it echoes the caller's user-agent/session and never the CLI defaults
+            // the executor substitutes later.
+            if (
+              carriesFreeTierRequestContract(
+                clientRawRequest?.body ?? body,
+                getExecutorClientHeaders()
+              )
+            ) {
+              console.warn(
+                `[provider] Node ${errorConnectionId} free-tier refusal on a contract-shaped request (${statusCode}) -- no provider pause armed (per-shape retry owns it)`
+              );
+            } else {
+              noteOpencodeFreeTierSkip(provider);
+            }
           }
         } else if (errorType === PROVIDER_ERROR_TYPES.GEO_BLOCKED) {
           // Google regional refusal: account-independent, non-terminal; park the connection
