@@ -925,7 +925,6 @@ function createSelectionLock(key: string) {
   };
 }
 
-// ─── Anti-Thundering Herd: per-connection mutex for markAccountUnavailable ───
 // Prevents multiple concurrent requests from marking the same connection
 // unavailable in parallel, which was the root cause of cascading 502 lockouts.
 const markMutexes = new Map<string, Promise<void>>();
@@ -2740,7 +2739,6 @@ export async function markAccountUnavailable(
     if (isOpencodeFreeTierRefusalForProvider(provider, status, errorText))
       return { shouldFallback: true, cooldownMs: 0 };
 
-    // ─── Anti-Thundering Herd Guard ─────────────────────────────────
     // If this connection was ALREADY marked unavailable by a prior concurrent
     // request (within the mutex window), skip re-marking to avoid resetting
     // the cooldown timer or double-incrementing the backoff level.
@@ -2994,24 +2992,12 @@ export async function markAccountUnavailable(
 
     const isNvidiaModelGone = provider === "nvidia" && status === 410;
     const modelLockoutOptions = { maxCooldownMs: effectiveProviderProfile?.maxCooldownMs };
-    // Same persisted reason the agentrouter 403 model-scope branch hard-codes
-    // ("forbidden"): the lock key is the getModelLockKey tuple shared with the
-    // combo path, and the declared 1h (same order as that combo lock) is
-    // operator-clamped by recordModelLockoutFailure to mlSettings.maxCooldownMs
-    // (~30min default) — the verbatim 1h never escapes operator control.
-    // Narrow scope: status === 400 only (never a 403/429 rule), adjacent to
-    // :2843's per-model-quota status set (which excludes 400) — malformed 400s
-    // carry no ruleScope and fall through unchanged.
     if (
       model &&
       provider &&
       fallbackResult.reason === "model_capacity" &&
       fallbackResult.ruleScope === "model"
     ) {
-      // Single source of truth: the rule's own cooldownMs (surfaced on
-      // fallbackResult by the 400 pre-check in checkFallbackError). The literal
-      // is only the fallback for a rule that declares no cooldown — editing
-      // the rule's cooldownMs takes effect without touching this call site.
       const ruleCooldownMs =
         typeof fallbackResult.cooldownMs === "number" && fallbackResult.cooldownMs > 0
           ? fallbackResult.cooldownMs

@@ -1448,7 +1448,6 @@ export class OpencodeExecutor extends BaseExecutor {
     // (DeepSeek V4 Flash, Kimi, MiniMax, ...) require reasoning_content echoed
     // back on assistant messages, or they 400 with "reasoning_content must be
     // passed back". OpenAI clients drop it across turns, so we inject a
-    // placeholder for the affected model families.
     if (isThinkingMessageModel(model)) {
       modifiedBody = injectReasoningContentForThinkingModel(modifiedBody);
     }

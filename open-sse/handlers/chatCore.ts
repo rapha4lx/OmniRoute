@@ -636,7 +636,6 @@ async function handleChatCoreInner({
     };
   };
   let tokensCompressed: number | null = null;
-  // ── Per-endpoint custom system prompt (port of upstream #2063) ──
   // Reads from cachedSettings if available (passed in from combo/chat layer)
   // to avoid an extra DB read on the hot path. Falls through to getCachedSettings()
   // only when this function is called outside the normal chat dispatch.
@@ -651,7 +650,6 @@ async function handleChatCoreInner({
       log?.debug?.("CUSTOMSP", "custom system prompt injected");
     }
   }
-  // ── Plugin onRequest hook ──
   // Dynamic import cached by Node.js after first call — minimal overhead
   const pluginGate = await runPluginOnRequestHook({
     requestId: traceId,
@@ -751,7 +749,6 @@ async function handleChatCoreInner({
     copilotCompatibleReasoning,
     clientResponseFormat,
   } = resolveChatCoreRequestFormat({ clientRawRequest, body, provider, userAgent });
-  // ── Phase 9.2: Idempotency check ──
   // Resolve the idempotency key once here and reuse it at the Phase 9.2 save site below,
   // rather than re-deriving it. (#3821-review LEDGER-6)
   const { hit: idempotencyHit, idempotencyKey } = await checkIdempotencyCache({
