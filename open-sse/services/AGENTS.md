@@ -23,6 +23,7 @@ Live count: `ls open-sse/services/*.ts | wc -l` (currently 134). More including 
 ### Account & Token Management
 
 - **`tokenRefresh.ts`** — OAuth token expiration detection and refresh.
+- **`upstreamModelCooldown.ts`** — Shared temporary lock for an unavailable upstream model; sibling models and accounts remain eligible.
 - **`accountFallback.ts`** — Account switching on quota/rate-limit. Also houses model lockout.
 - **`sessionManager.ts`** — Request session state across retries.
 

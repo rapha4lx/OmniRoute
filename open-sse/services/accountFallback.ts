@@ -1871,6 +1871,9 @@ export function checkFallbackError(
     };
   }
 
+  const modelCapacity = getOpencodeModelUnavailableMatch(provider, status, headers, errorStr);
+  if (modelCapacity) return ruleScopedResult(modelCapacity);
+
   const isRateLimitStatus = status === HTTP_STATUS.RATE_LIMITED;
   const preserveQuota429 = shouldPreserveQuotaSignals(provider, errorText);
   const shouldUseQuotaSignal = !isRateLimitStatus || preserveQuota429;

@@ -1,3 +1,4 @@
+import { noteUpstreamModelFailure } from "@omniroute/open-sse/services/upstreamModelCooldown.ts";
 import { randomUUID } from "crypto";
 import { resolveChatRequestBody } from "./requestBody";
 import * as chatAdmission from "./chatAdmission.ts";
@@ -2116,6 +2117,10 @@ async function handleSingleModelChat(
         }
         releaseOAuthSession();
         return successResponse;
+      }
+
+      if (noteUpstreamModelFailure(provider, model, result.status, result.error)) {
+        return withSelectedConnectionHeader(result.response, credentials?.connectionId);
       }
 
       // A final hard-lease fence rejection is authoritative. It must never mutate

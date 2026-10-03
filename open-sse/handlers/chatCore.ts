@@ -758,10 +758,10 @@ async function handleChatCoreInner({
     clientRawRequest,
     provider,
     model,
-    // NEXA fusion-idempotency fix: body.messages feeds the key digest so combo-internal
-    // sub-requests (fusion panel + judge re-enter chatCore sharing the client's headers)
-    // can never collide on the raw Idempotency-Key/x-request-id header key.
+    // NEXA fusion-idempotency fix: body.messages feeds the key digest so combo-internal sub-requests
+    // (fusion panel + judge share the client's headers) never collide on the raw header key.
     body,
+    apiKeyId: apiKeyInfo?.id ?? null,
     effectiveServiceTier,
     startTime,
     log,
@@ -4069,13 +4069,17 @@ async function handleChatCoreInner({
           console.warn(
             `[provider] Node ${errorConnectionId} project routing error (${statusCode}) -- not banning`
           );
+          // #14313: free-tier refusal on the keyless path — record a short TTL
+          // skip so auto-combo / noauth fallback stop re-picking it immediately.
+          // #14977: arm decision is shape-aware — only non-contract refusals arm the pause.
           armOpencodeFreeTierSkipAfterRefusal(
             errorConnectionId,
             provider,
             statusCode,
             message,
             clientRawRequest?.body ?? body,
-            getExecutorClientHeaders()
+            getExecutorClientHeaders(),
+            targetModel || model
           );
         } else if (errorType === PROVIDER_ERROR_TYPES.GEO_BLOCKED) {
           // Google regional refusal: account-independent, non-terminal; park the connection

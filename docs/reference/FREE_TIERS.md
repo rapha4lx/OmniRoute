@@ -280,42 +280,37 @@ Most "free tokens per month" figures in this space are sums of per-model labels.
 
 ---
 
-## OpenCode Free: client-contract restriction (#14313)
+## OpenCode Free: CLI compatibility and model cooldown (#14977)
 
-The keyless `opencode` provider (public `https://opencode.ai/zen/v1`) refuses any request
-that does not match the OpenCode client contract with **403 `FreeTierError`** and the
-sentence _"OpenCode's free tier can only be used from within OpenCode"_. This is a
-request-scoped refusal (same verdict on every account for the same request shape), not a
-model ban or connection cooldown — OmniRoute classifies it as `project_route_error`, skips
-model lockout / cooldown, and (on the synthetic `noauth` path) pauses auto-combo re-selection
-for a short TTL. Ship requests that carry a non-empty tool list, `stream: true`, and the
-OpenCode session/UA headers (`opencodeFreeTierContract.ts`) or expect the 403.
+OpenCode Zen can return **403 `FreeTierError`** with the message
+"OpenCode's free tier can only be used from within OpenCode". This refusal does not prove
+that every model or request format is unavailable. Native OpenCode 1.18.31 and dashboard
+requests were validated on 2026-10-03; see [the validation report](../ops/OPENCODE_PRODUCTION_VALIDATION.md).
 
-### The pause is armed only for non-contract shapes (#14977)
+The keyless executor uses `prepareFreeTierRequest()` with CLI compatibility enabled.
+`opencodeCliCompat.ts` adds the captured chat prompt, headers, streaming contract, and
+placeholder client tools when needed. `opencodeResponsesCliCompat.ts` supplies the captured
+Muse developer prompt and flat Responses tools. Caller messages, instructions, and supplied
+tools are preserved. The compatibility tools describe the wire contract; they are not
+executed by OmniRoute. `OPENCODE_CLI_COMPAT=false` disables this adaptation.
 
-That TTL skip is **provider-global and in-process**, so arming it on a thin or synthetic
-request parked the whole keyless provider for every later caller. Keyless `opencode` has no
-keyed connections, so there was no other path to fall back to: one thin refusal blacked out
-every subsequent contract-shaped request — including the native CLI's own shape, which would
-have been served — for the full TTL.
+`armOpencodeFreeTierSkipAfterRefusal()` receives the raw request, executor headers, and target
+model from `chatCore.ts`. A contract-shaped request remains eligible for bounded shape retry.
+For a thin refusal with a target model, the runtime records a **model-only** three-minute
+lock via `upstreamModelCooldown.ts`; it does not arm the provider-global pause. The legacy
+helper path without a model retains its original provider-pause behavior.
 
-The arm site in `open-sse/handlers/chatCore.ts` now hands the refused request to
-`armOpencodeFreeTierSkipAfterRefusal()` (`open-sse/executors/opencodeFreeTierContract.ts`),
-which judges it on the **raw** client body
-(`clientRawRequest?.body ?? body`; the post-processing body carries OmniRoute's own synthesis)
-and the client-derived headers, and arms the pause only when the request did **not** already
-carry the client contract. `carriesFreeTierRequestContract()` requires all three of:
+| Failure                                                                        | Runtime cooldown           | Scope                               |
+| ------------------------------------------------------------------------------ | -------------------------- | ----------------------------------- |
+| Recognized OpenCode 5xx with `Upstream error from` / `Upstream request failed` | 2 minutes                  | Provider + model across connections |
+| Thin free-tier 403 refusal                                                     | 3 minutes                  | Provider + model across connections |
+| 400 `Upstream request failed: Model is unavailable`                            | 30 minutes (runtime clamp) | Provider + model across connections |
 
-1. `stream: true`;
-2. at least one tool name outside `{_noop} ∪ OPENCODE_FREE_TIER_PLACEHOLDER_TOOLS` — the
-   placeholder is synthesis, never client evidence;
-3. a session identity **or** a CLI user-agent (OR, not AND — OmniRoute synthesizes the other
-   half anyway, and the upstream checks each header independently).
-
-A contract-shaped refusal is a per-shape verdict and is handled by the per-shape retry
-(`open-sse/executors/opencodeFreeTierRetry.ts`); it arms no provider pause and keeps the anti-repick-loop bound.
-The read site (`src/sse/services/auth.ts`) is deliberately unchanged — it has no request
-context, so shape is not plumbed through the four account-selection call sites.
+The shared lock uses a reserved model key, not a provider connection row. Account selection
+returns a local model-cooldown response before dispatch. Combo execution excludes these
+failures from provider breaker and optional provider-cooldown accounting. Other models remain
+eligible. Locks expire lazily and are currently in-process, so multiple replicas do not share
+this temporary state.
 
 ## What changed since the shipped catalog (`freeNote`)
 

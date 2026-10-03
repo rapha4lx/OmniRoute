@@ -1,3 +1,4 @@
+import { noteUpstreamModelRefusal } from "../services/upstreamModelCooldown.ts";
 /**
  * opencodeFreeTierContract.ts — the request contract OpenCode Zen's free tier enforces.
  *
@@ -21,6 +22,7 @@
  * and the way back: the forced stream is rebuilt into a JSON body for a caller that asked
  * for JSON, reusing the shared event-stream parsers.
  */
+import { applyOpencodeCliCompat, hasOpencodeNativePrompt } from "./opencodeCliCompat.ts";
 import { parseSSEToOpenAIResponse, parseSSEToResponsesOutput } from "../handlers/sseParser.ts";
 import {
   getObservedToolNames,
@@ -343,6 +345,119 @@ function clientToolNamesOf(body: unknown): string[] {
 }
 
 /**
+ * Bring one request up to the contract and report what it ended up declaring.
+ *
+ * Single entry point for the executor: it decides whether the contract applies to this
+ * surface and model, resolves the placeholder names, applies the body changes, and hands
+ * back the attempt so the outcome can be fed to `noteFreeTierOutcome`.
+ */
+/**
+ * The attempt of the request being served, found by the identity of the body the executor was
+ * handed. It cannot live on the executor: that instance is shared, and two requests in flight
+ * would read each other's attempt when they finish. It is released when the request is over.
+ */
+export function attemptFor(origin: unknown): FreeTierContractAttempt | null {
+  return recallAttempt<FreeTierContractAttempt>(origin);
+}
+
+function isTrackable(value: unknown): value is object {
+  return typeof value === "object" && value !== null;
+}
+
+export function prepareFreeTierRequest<T>(
+  body: T,
+  requestFormat: string | null,
+  surface: OpencodeSurface,
+  provider: string,
+  model: string,
+  session?: string,
+  origin?: object,
+  cliCompat = false
+): { body: T; attempt: FreeTierContractAttempt | null } {
+  const clientToolNames = clientToolNamesOf(body);
+  if (!requiresFreeTierRequestContract(surface, provider, model)) {
+    if (isTrackable(origin)) forgetAttempt(origin);
+    return { body, attempt: null };
+  }
+  const cliBody = cliCompat ? applyOpencodeCliCompat(body, requestFormat) : body;
+  const native =
+    cliCompat &&
+    !/^(0|false|no|off)$/i.test(process.env.OPENCODE_CLI_COMPAT?.trim() ?? "") &&
+    hasOpencodeNativePrompt(body);
+  const eligible =
+    cliBody === body && !native && isTrackable(origin) && clientToolNames.length === 0;
+  const key = eligible ? shapeKeyOf(provider, model, body) : "";
+  const plan =
+    isTrackable(origin) && eligible
+      ? planShape(origin, key)
+      : { shape: "tools" as const, probe: false };
+  const chosen = plan.shape;
+  const names = resolvePlaceholderNames(provider, model, session, configuredPlaceholderToolNames());
+  const borrowed =
+    cliBody === body &&
+    !native &&
+    clientToolNames.length === 0 &&
+    names.length > 0 &&
+    chosen === "tools";
+  const attempt: FreeTierContractAttempt = {
+    provider,
+    model,
+    session,
+    borrowed,
+    clientToolNames,
+    probe: plan.probe,
+  };
+  if (isTrackable(origin)) rememberAttempt(origin, attempt);
+  if (isTrackable(origin) && eligible) {
+    recordInjection(origin, {
+      shape: chosen,
+      key,
+      probe: plan.probe,
+      replayNote: () => noteFreeTierOutcome({ ...attempt, probe: false }, false),
+    });
+  }
+  return {
+    body:
+      native || cliBody !== body
+        ? withStreaming(cliBody)
+        : chosen === "bare"
+          ? withStreaming(body)
+          : applyFreeTierRequestContract(body, requestFormat, names),
+    attempt,
+  };
+}
+
+function withStreaming<T>(body: T): T {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+  return { ...(body as Record<string, unknown>), stream: true } as T;
+}
+
+/**
+ * Feed a gated request's outcome back, so the next one borrows a shape that still works.
+ *
+ * An accepted request teaches which names the upstream takes right now; a refused one only
+ * teaches something when the names it carried came from the store.
+ */
+export function noteFreeTierOutcome(attempt: FreeTierContractAttempt | null, ok: boolean): void {
+  if (!attempt) return;
+  if (ok) {
+    if (attempt.clientToolNames.length > 0) {
+      recordAcceptedToolNames(
+        attempt.provider,
+        attempt.model,
+        attempt.session,
+        attempt.clientToolNames
+      );
+    }
+    return;
+  }
+  if (attempt.probe) return;
+  if (attempt.borrowed) {
+    noteRefusedBorrowedToolNames(attempt.provider, attempt.model, attempt.session);
+  }
+}
+
+/**
  * Whether a request already carried the OpenCode client contract, judged on the RAW client
  * body and the client-derived headers.
  *
@@ -410,111 +525,14 @@ export function armOpencodeFreeTierSkipAfterRefusal(
   statusCode: number,
   message: string | null | undefined,
   rawClientBody: unknown,
-  clientHeaders?: Record<string, string> | null
+  clientHeaders?: Record<string, string> | null,
+  model?: string
 ): void {
   if (connectionId !== "noauth") return;
   if (!isOpencodeFreeTierRefusalForProvider(provider, statusCode, message ?? null)) return;
   if (carriesFreeTierRequestContract(rawClientBody, clientHeaders)) return;
-  noteOpencodeFreeTierSkip(provider);
-}
-
-/**
- * Bring one request up to the contract and report what it ended up declaring.
- *
- * Single entry point for the executor: it decides whether the contract applies to this
- * surface and model, resolves the placeholder names, applies the body changes, and hands
- * back the attempt so the outcome can be fed to `noteFreeTierOutcome`.
- */
-/**
- * The attempt of the request being served, found by the identity of the body the executor was
- * handed. It cannot live on the executor: that instance is shared, and two requests in flight
- * would read each other's attempt when they finish. It is released when the request is over.
- */
-export function attemptFor(origin: unknown): FreeTierContractAttempt | null {
-  return recallAttempt<FreeTierContractAttempt>(origin);
-}
-
-function isTrackable(value: unknown): value is object {
-  return typeof value === "object" && value !== null;
-}
-
-export function prepareFreeTierRequest<T>(
-  body: T,
-  requestFormat: string | null,
-  surface: OpencodeSurface,
-  provider: string,
-  model: string,
-  session?: string,
-  origin?: object
-): { body: T; attempt: FreeTierContractAttempt | null } {
-  const clientToolNames = clientToolNamesOf(body);
-  if (!requiresFreeTierRequestContract(surface, provider, model)) {
-    if (isTrackable(origin)) forgetAttempt(origin);
-    return { body, attempt: null };
-  }
-  const eligible = isTrackable(origin) && clientToolNames.length === 0;
-  const key = eligible ? shapeKeyOf(provider, model, body) : "";
-  const plan =
-    isTrackable(origin) && eligible
-      ? planShape(origin, key)
-      : { shape: "tools" as const, probe: false };
-  const chosen = plan.shape;
-  const names = resolvePlaceholderNames(provider, model, session, configuredPlaceholderToolNames());
-  const borrowed = clientToolNames.length === 0 && names.length > 0 && chosen === "tools";
-  const attempt: FreeTierContractAttempt = {
-    provider,
-    model,
-    session,
-    borrowed,
-    clientToolNames,
-    probe: plan.probe,
-  };
-  if (isTrackable(origin)) rememberAttempt(origin, attempt);
-  if (isTrackable(origin) && eligible) {
-    recordInjection(origin, {
-      shape: chosen,
-      key,
-      probe: plan.probe,
-      replayNote: () => noteFreeTierOutcome({ ...attempt, probe: false }, false),
-    });
-  }
-  return {
-    body:
-      chosen === "bare"
-        ? withStreaming(body)
-        : applyFreeTierRequestContract(body, requestFormat, names),
-    attempt,
-  };
-}
-
-function withStreaming<T>(body: T): T {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
-  return { ...(body as Record<string, unknown>), stream: true } as T;
-}
-
-/**
- * Feed a gated request's outcome back, so the next one borrows a shape that still works.
- *
- * An accepted request teaches which names the upstream takes right now; a refused one only
- * teaches something when the names it carried came from the store.
- */
-export function noteFreeTierOutcome(attempt: FreeTierContractAttempt | null, ok: boolean): void {
-  if (!attempt) return;
-  if (ok) {
-    if (attempt.clientToolNames.length > 0) {
-      recordAcceptedToolNames(
-        attempt.provider,
-        attempt.model,
-        attempt.session,
-        attempt.clientToolNames
-      );
-    }
-    return;
-  }
-  if (attempt.probe) return;
-  if (attempt.borrowed) {
-    noteRefusedBorrowedToolNames(attempt.provider, attempt.model, attempt.session);
-  }
+  if (model && provider) noteUpstreamModelRefusal(provider, model, statusCode, message ?? "");
+  else noteOpencodeFreeTierSkip(provider);
 }
 
 /**
