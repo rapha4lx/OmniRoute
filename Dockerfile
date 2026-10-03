@@ -168,10 +168,10 @@ ENV OMNIROUTE_MITM_STUB=1
 # on V8, so keep the ceiling. NODE_OPTIONS propagates to the spawned `next build`
 # child (build-next-isolated.mjs → resolveNextBuildEnv spreads process.env).
 # Build-only; the runtime heap is set separately on the runner stage
-# (OMNIROUTE_MEMORY_MB). Override: `--build-arg OMNIROUTE_BUILD_MEMORY_MB=6144`.
+# (OMNIROUTE_MEMORY_MB). Override: `--build-arg OMNIROUTE_BUILD_MEMORY_MB=16384`.
 # Default raised 4096 → 6144 (#10060): the Next 16 production pass on a codebase
 # this size intermittently OOMs a build worker at 4 GB on memory-tight hosts.
-ARG OMNIROUTE_BUILD_MEMORY_MB=6144
+ARG OMNIROUTE_BUILD_MEMORY_MB=16384
 ENV NODE_OPTIONS="--max-old-space-size=${OMNIROUTE_BUILD_MEMORY_MB}"
 
 # Cap Next.js build worker pools. Next 16 defaults to `os.cpus().length - 1`
@@ -276,7 +276,7 @@ COPY --chown=node:node --from=builder /app/scripts/dev/healthcheck.mjs ./healthc
 # afterwards: in the overlay filesystem changing ownership rewrites every file
 # into a new layer, which stored the ~2 GB standalone build twice (#13990).
 
-EXPOSE 20128
+EXPOSE 20128 20132
 
 # Drop to non-root before ENTRYPOINT/CMD so every derived stage (runner-cli,
 # runner-web) also runs as a non-root user unless they explicitly switch back.

@@ -155,3 +155,22 @@ app.__qa_backup/
 .next-playwright/
 cloud/
 electron/dist-electron
+
+# Local diagnostic captures, certificates, and experimental scripts
+*.key
+*.crt
+*.cert
+*.csr
+*.srl
+/extfile.cnf
+/body*.json
+/test*.json
+/second_request.txt
+/scratch
+/*.cjs
+/*.py
+/*.c
+/patch*.js
+/start*.sh
+/setup_ca.sh
+/test-build.mjs
