@@ -93,4 +93,7 @@ older PR-based branch produced 491 passing tests and two failures in
 `open-sse/mcp-server/__tests__/audit.test.ts`: a shutdown checkpoint timeout and a missing
 mock close call. These results repeated on retry; those files are outside this change.
 The earlier 493/493 result above refers to the deployed checkout, not this older PR base.
-The branch has not been merged upstream or into the existing PR head.
+On 2026-10-04, the operator explicitly authorized publishing these commits to the existing
+PR #15143 head branch `fix/14977-free-tier-shape-arm-skip`. The update advances that branch
+with the validated commits and preserves its history. The PR remains draft and has not
+been merged upstream.
