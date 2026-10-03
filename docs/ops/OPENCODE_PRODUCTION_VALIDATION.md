@@ -77,3 +77,20 @@ observations at the stated date, not a promise of future upstream model availabi
 The model lock is process-local; restart clears it and replicas do not synchronize it.
 Native compatibility is based on the captured CLI version and may need revision if upstream
 changes its contract. Native Muse 1.2 behavior could not be tested past model resolution.
+
+## Publication branch validation
+
+The follow-up branch `fix/opencode-cli-model-cooldown-14977` is based on the existing
+PR #15143 head, rather than replacing another session's worktree. It contains the runtime
+changes, production Compose configuration, and this report. The existing upstream version
+sync fix (#15113) was cherry-picked, preserving its original author. The geo-rotation test
+state reset from upstream commit `0816f6248b` was also ported to remove cross-case proxy
+refusal state inherited from the older PR base.
+
+Final branch checks: 732 focused Node tests passed; production Compose tests passed 2/2;
+core typecheck, docs-all, frozen file-size checks, and commit hooks passed. Vitest on this
+older PR-based branch produced 491 passing tests and two failures in
+`open-sse/mcp-server/__tests__/audit.test.ts`: a shutdown checkpoint timeout and a missing
+mock close call. These results repeated on retry; those files are outside this change.
+The earlier 493/493 result above refers to the deployed checkout, not this older PR base.
+The branch has not been merged upstream or into the existing PR head.
